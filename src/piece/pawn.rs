@@ -54,6 +54,8 @@ impl PieceData for PawnData {
             moves.push(target);
         }
 
+        board.exclude_king_exposure(&mut moves, pos, color);
+
         moves
     }
 

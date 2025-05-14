@@ -9,16 +9,16 @@ pub struct Board {
 
 impl Board {
     pub fn set (&mut self, pos: Position, piece: Option<Piece>) {
-        self.squares[pos.row][pos.col] = match Position::is_valid(pos.row as i8, pos.col as i8) {
-            true => piece,
-            false => return
+        if Position::is_valid(pos.row as i8, pos.col as i8) {
+            self.squares[pos.row][pos.col] = piece;
         }
     }
 
     pub fn get (&self, pos: Position) -> Option<&Piece> {
-        match Position::is_valid(pos.row as i8, pos.col as i8) {
-            true => self.squares[pos.row][pos.col].as_ref(),
-            false => None,
+        if Position::is_valid(pos.row as i8, pos.col as i8) {
+            self.squares[pos.row][pos.col].as_ref()
+        } else {
+            None
         }
     }
 
@@ -58,7 +58,6 @@ impl Board {
         };
 
         let moves = piece.data.legal_moves(from, piece.color, self);
-        // self.exclude_king_exposure(&mut moves, from, piece.color);
         if !moves.contains(&to) {
             self.set(from, Some(piece));
             return;
@@ -72,39 +71,56 @@ impl Board {
         self.switch_turn();
     }
 
-    pub fn get_king_pos (&mut self, color: Color) -> Option<Position> {
-        for row in 0..8 {
-            for col in 0..8 {
-                if let Some(p) = self.get(Position { row, col }) {
-                    if p.color == color && p.name == Name::King {
-                        return Some(p.pos);
-                    }
-                    else { continue; }
-                } else {
-                    continue;
-                }
-            }
-        }
-        None
+    pub fn get_king_pos (&self, color: Color) -> Option<Position> {
+        self.all_positions()
+            .find(|&pos| {
+                self.get(pos)
+                    .map_or(false, |p| p.name == Name::King && p.color == color)
+            })
     }
 
-    pub fn is_in_check (&mut self, color: Color) -> bool {
+    // todo: fix fn
+    pub fn is_in_check (&self, color: Color) -> bool {
         let king_pos = match self.get_king_pos(color) {
-            Some(pos) => pos,
-            None => panic!("No king on board"),
+            Some(k) => k,
+            None    => panic!("No {:?} king on board", color),
         };
 
-        for row in 0..8 {
-            for col in 0..8 {
-                if let Some(p) = self.get(Position { row, col }) {
-                    if p.color == color { continue; }
-                    if p.data.legal_moves(Position { row, col }, p.color, self).contains(&king_pos) {
-                        return true;
-                    }
-                } else { continue; }
-            }
-        }
-        false
+        self.all_positions()
+            .filter_map(|pos| self.get(pos).map(|p| (pos, p)))
+            .any(|(pos, p)| {
+                p.color != color
+                    && p
+                        .data
+                        .legal_moves(pos, p.color, self)
+                        .contains(&king_pos)
+            })
+    }
+
+    pub fn is_checkmate (&mut self, color: Color) -> bool {
+        self.is_in_check(color) &&
+        self
+            .all_positions()
+            .filter_map(|from| self.get(from))
+            .filter(|p| p.color == color)
+            .all(|p| {
+                let mut m = p.data.legal_moves(p.pos, p.color, self);
+                self.exclude_king_exposure(&mut m, p.pos, color);
+                m.is_empty()
+            })
+    }
+
+    pub fn is_stalemate (&mut self, color: Color) -> bool {
+        !self.is_in_check(color) &&
+        self
+            .all_positions()
+            .filter_map(|from| self.get(from))
+            .filter(|p| p.color == color)
+            .all(|p| {
+                let mut m = p.data.legal_moves(p.pos, p.color, self);
+                self.exclude_king_exposure(&mut m, p.pos, color);
+                m.is_empty()
+            })
     }
 
     pub fn exclude_king_exposure (&self, available_moves: &mut Vec<Position>, from: Position, color: Color) -> () {
@@ -116,17 +132,22 @@ impl Board {
     }
 
     pub fn reset_passants (&mut self, color: Color) -> () {
-        for row in 0..8 {
-            for col in 0..8 {
-                let pos = Position { row, col };
-                if let Some(piece) = self.get_mut(pos) {
-                    if piece.name == Name::Pawn && piece.color == color {
-                        if let Some(pawn_data) = piece.data.as_any_mut().downcast_mut::<PawnData>() {
-                            pawn_data.passant_target = None;
-                        }
+        let positions: Vec<Position> = self.all_positions().collect();
+
+        positions.into_iter().for_each(|pos| {
+            if let Some(piece) = self.get_mut(pos) {
+                if piece.name == Name::Pawn && piece.color == color {
+                    if let Some(pawn_data) =
+                        piece.data.as_any_mut().downcast_mut::<PawnData>()
+                    {
+                        pawn_data.passant_target = None;
                     }
                 }
             }
-        }
+        });
+    }
+
+    pub fn all_positions(&self) -> impl Iterator<Item = Position> {
+        (0..8).flat_map(|row| (0..8).map(move |col| Position { row, col }))
     }
 }
